@@ -1,0 +1,16 @@
+# Qwen3-VL 要求 transformers >= 4.57.0
+transformers>=4.57.0
+# 官方视觉工具包
+qwen-vl-utils==0.0.14
+# 深度学习框架
+torch>=2.1.0
+torchvision>=0.16.0
+# 模型加速
+accelerator>=0.26.0
+# 图像处理
+Pillow>=10.0.0
+opencv-python>=4.8.0
+# 可视化
+matplotlib>=3.7.0
+# 可选：更快的视频解码（Linux 推荐）
+# decord>=0.6.0
