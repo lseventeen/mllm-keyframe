@@ -19,7 +19,7 @@ class Config:
     window_stride: int = 2                           # 滑动步长
 
     # 输出配置
-    top_k: int = 3                                   # 最终输出关键帧数量
+    top_k: int = 1                                   # 最终输出关键帧数量
     output_dir: str = "./keyframes_output"           # 关键帧保存目录
 
     # 推理配置

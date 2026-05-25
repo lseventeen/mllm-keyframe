@@ -77,8 +77,8 @@ def main():
                         help="输入路径：图像帧文件夹或多页 TIFF")
     parser.add_argument("--model",       type=str, default="Qwen/Qwen3-VL-8B-Instruct",
                         help="模型名称或本地权重路径")
-    parser.add_argument("--top_k",       type=int, default=3,
-                        help="输出关键帧数量（默认 3）")
+    parser.add_argument("--top_k",       type=int, default=1,
+                        help="输出关键帧数量（默认 1）")
     parser.add_argument("--interval",    type=int, default=1,
                         help="抽帧间隔，仅 TIFF 输入有效（默认 1=每帧）")
     parser.add_argument("--window_size", type=int, default=5,
