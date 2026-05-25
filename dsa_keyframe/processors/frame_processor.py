@@ -47,25 +47,6 @@ class FrameProcessor:
         return result
 
     @staticmethod
-    def _resize_long_edge_tensor(image: torch.Tensor, long_edge: int | None) -> torch.Tensor:
-        """Resize 单帧 [H,W,C]；long_edge<=0 或 None 时原样返回"""
-        if long_edge is None or long_edge <= 0:
-            return image
-
-        h, w = int(image.shape[0]), int(image.shape[1])
-        max_edge = max(w, h)
-        if max_edge == long_edge:
-            return image
-
-        scale = long_edge / float(max_edge)
-        new_w = max(1, int(round(w * scale)))
-        new_h = max(1, int(round(h * scale)))
-
-        chw = image.permute(2, 0, 1).unsqueeze(0)
-        resized = F.interpolate(chw, size=(new_h, new_w), mode="bilinear", align_corners=False)
-        return resized.squeeze(0).permute(1, 2, 0)
-
-    @staticmethod
     def _batch_resize_long_edge(images: torch.Tensor, long_edge: int | None) -> torch.Tensor:
         """批量 Resize [N,H,W,C]；所有帧尺寸相同时一次完成"""
         if long_edge is None or long_edge <= 0:
