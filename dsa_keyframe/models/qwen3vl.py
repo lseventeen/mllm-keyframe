@@ -2,7 +2,9 @@
 Qwen3-VL 模型加载与推理封装
 """
 
+import numpy as np
 import torch
+from PIL import Image as PILImage
 from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
 
@@ -30,11 +32,38 @@ class Qwen3VLModel:
         self.model.eval()
         print(f"[INFO] 模型加载完成")
 
+    @staticmethod
+    def _convert_images_in_messages(messages: list) -> list:
+        """
+        将消息内容中的 numpy.ndarray 图像转换为 PIL.Image，
+        因为 qwen_vl_utils.fetch_image 不接受 numpy.ndarray。
+        仅对含有 numpy 图像的 part 做浅拷贝，不修改原始输入。
+        """
+        result = []
+        for message in messages:
+            new_parts = []
+            for part in message.get("content", []):
+                if part.get("type") == "image" and isinstance(part.get("image"), np.ndarray):
+                    arr = part["image"]
+                    if arr.dtype != np.uint8:
+                        arr = arr.astype(np.uint8)
+                    # 单通道 -> RGB
+                    if arr.ndim == 2:
+                        arr = np.stack([arr] * 3, axis=-1)
+                    elif arr.ndim == 3 and arr.shape[2] == 1:
+                        arr = np.repeat(arr, 3, axis=2)
+                    new_parts.append({**part, "image": PILImage.fromarray(arr)})
+                else:
+                    new_parts.append(part)
+            result.append({**message, "content": new_parts})
+        return result
+
     def generate(self, messages: list) -> str:
         """
         统一推理接口
         使用 process_vision_info 处理图像（image_patch_size=16 为 Qwen3-VL 必须参数）
         """
+        messages = self._convert_images_in_messages(messages)
         text = self.processor.apply_chat_template(
             messages,
             tokenize=False,
