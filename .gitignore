@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.venv/
+venv/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Outputs
+keyframes_output/
+processed_frames/
+sequence_visualization*/
+
+# Models/cache
+*.safetensors
+*.pt
+*.pth
+.hf_cache/
+.cache/
+
+# Logs
+*.log

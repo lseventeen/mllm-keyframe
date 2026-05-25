@@ -29,3 +29,6 @@ class Config:
     # 图像分辨率控制（视显存大小调整）
     min_pixels: int = 256 * 32 * 32                  # 最小像素数
     max_pixels: int = 1280 * 32 * 32                 # 最大像素数
+
+    # 预处理配置
+    resize_long_edge: int = 256                    # 预处理后图像长边像素

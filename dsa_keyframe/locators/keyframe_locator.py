@@ -5,11 +5,10 @@ DSA 关键帧定位核心逻辑
 """
 
 import re
-from PIL import Image
+import numpy as np
 
 from ..config import Config
 from ..models.qwen3vl import Qwen3VLModel
-from ..processors.frame_processor import FrameProcessor
 
 
 class DSAKeyframeLocator:
@@ -20,7 +19,7 @@ class DSAKeyframeLocator:
     # ----------------------------------------------------------
     # 方案一：逐帧评分
     # ----------------------------------------------------------
-    def score_single_frame(self, image: Image.Image) -> float:
+    def score_single_frame(self, image: np.ndarray) -> float:
         """
         对单帧 DSA 图像进行质量评分（0~10）
         评分依据：造影剂充盈程度 + 血管清晰度
@@ -50,15 +49,14 @@ class DSAKeyframeLocator:
 
     def locate_by_scoring(
         self,
-        frames: list[Image.Image],
+        frames: list[np.ndarray],
         indices: list[int]
     ) -> list[int]:
         """逐帧打分，返回 top_k 关键帧索引（按时间顺序）"""
         print(f"[INFO] 开始逐帧评分，共 {len(frames)} 帧...")
         scores = []
         for frame, idx in zip(frames, indices):
-            processed = FrameProcessor.preprocess_dsa_frame(frame)
-            score = self.score_single_frame(processed)
+            score = self.score_single_frame(frame)
             scores.append((idx, score))
             print(f"  帧 {idx:4d} -> 得分: {score:.1f}")
 
@@ -70,7 +68,7 @@ class DSAKeyframeLocator:
     # ----------------------------------------------------------
     def compare_window(
         self,
-        window_frames: list[Image.Image],
+        window_frames: list[np.ndarray],
         window_indices: list[int]
     ) -> int:
         """
@@ -106,7 +104,7 @@ class DSAKeyframeLocator:
 
     def locate_by_comparison(
         self,
-        frames: list[Image.Image],
+        frames: list[np.ndarray],
         indices: list[int]
     ) -> list[int]:
         """滑动窗口多帧对比 + 投票，返回 top_k 关键帧索引"""
@@ -119,10 +117,7 @@ class DSAKeyframeLocator:
         total_windows = max(1, (len(frames) - ws) // stride + 1)
 
         for w_idx, i in enumerate(range(0, max(1, len(frames) - ws + 1), stride)):
-            window_frames = [
-                FrameProcessor.preprocess_dsa_frame(f)
-                for f in frames[i:i + ws]
-            ]
+            window_frames = frames[i:i + ws]
             window_indices = indices[i:i + ws]
             best_idx = self.compare_window(window_frames, window_indices)
             vote_count[best_idx] = vote_count.get(best_idx, 0) + 1
@@ -138,7 +133,7 @@ class DSAKeyframeLocator:
     # ----------------------------------------------------------
     def locate(
         self,
-        frames: list[Image.Image],
+        frames: list[np.ndarray],
         indices: list[int]
     ) -> list[int]:
         """根据 config.score_mode 选择定位策略"""

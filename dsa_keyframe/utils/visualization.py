@@ -1,16 +1,36 @@
 """
-结果可视化：生成关键帧对比图
+结果可视化：生成关键帧对比图（TIFF）
 """
 
 import os
-import matplotlib.pyplot as plt
-from PIL import Image
+
+import numpy as np
+import tifffile
 
 from ..processors.frame_processor import FrameProcessor
 
 
+def _to_rgb(frame: np.ndarray) -> np.ndarray:
+    if frame.ndim == 2:
+        return np.stack([frame] * 3, axis=-1)
+    if frame.ndim == 3 and frame.shape[2] == 1:
+        return np.repeat(frame, 3, axis=2)
+    return frame
+
+
+def _add_red_border(frame: np.ndarray, thickness: int = 3) -> np.ndarray:
+    bordered = frame.copy()
+    h, w = bordered.shape[:2]
+    t = min(thickness, h // 2, w // 2)
+    bordered[:t, :, :] = [255, 0, 0]
+    bordered[-t:, :, :] = [255, 0, 0]
+    bordered[:, :t, :] = [255, 0, 0]
+    bordered[:, -t:, :] = [255, 0, 0]
+    return bordered
+
+
 def visualize_results(
-    all_frames: list[Image.Image],
+    all_frames: list[np.ndarray],
     all_indices: list[int],
     keyframe_indices: list[int],
     output_dir: str
@@ -18,7 +38,7 @@ def visualize_results(
     """
     保存关键帧并生成可视化对比图
     Args:
-        all_frames: 所有帧的 PIL 图像列表
+        all_frames: 所有帧的 numpy 图像列表
         all_indices: 对应帧索引列表
         keyframe_indices: 关键帧索引列表
         output_dir: 输出目录
@@ -31,24 +51,17 @@ def visualize_results(
     FrameProcessor.save_keyframes(keyframes, keyframe_indices, output_dir)
 
     # 2. 生成横向对比图
-    n = len(keyframe_indices)
-    fig, axes = plt.subplots(1, n, figsize=(5 * n, 5))
-    if n == 1:
-        axes = [axes]
+    panels = []
+    for frame_idx in keyframe_indices:
+        if frame_idx not in frame_map:
+            continue
+        rgb = _to_rgb(frame_map[frame_idx]).astype(np.uint8)
+        panels.append(_add_red_border(rgb))
 
-    for ax, frame_idx in zip(axes, keyframe_indices):
-        if frame_idx in frame_map:
-            ax.imshow(frame_map[frame_idx], cmap="gray")
-        ax.set_title(f"Key Frame\nIndex: {frame_idx}", fontsize=12, color="red")
-        ax.axis("off")
-        for spine in ax.spines.values():
-            spine.set_edgecolor("red")
-            spine.set_linewidth(3)
+    if not panels:
+        return
 
-    plt.suptitle("DSA Keyframe Localization Results (Qwen3-VL)", fontsize=14, fontweight="bold")
-    plt.tight_layout()
-
-    viz_path = os.path.join(output_dir, "keyframes_visualization.png")
-    plt.savefig(viz_path, dpi=150, bbox_inches="tight")
-    plt.close()
+    viz = np.concatenate(panels, axis=1)
+    viz_path = os.path.join(output_dir, "keyframes_visualization.tiff")
+    tifffile.imwrite(viz_path, viz)
     print(f"[INFO] 可视化结果已保存: {viz_path}")
