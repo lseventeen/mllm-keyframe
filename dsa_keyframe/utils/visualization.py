@@ -61,7 +61,17 @@ def visualize_results(
     if not panels:
         return
 
-    viz = np.concatenate(panels, axis=1)
+    # 若各帧高度不同，先 padding 到相同高度（底部补零）
+    max_h = max(p.shape[0] for p in panels)
+    padded = []
+    for p in panels:
+        h = p.shape[0]
+        if h < max_h:
+            pad = np.zeros((max_h - h, p.shape[1], p.shape[2]), dtype=p.dtype)
+            p = np.concatenate([p, pad], axis=0)
+        padded.append(p)
+
+    viz = np.concatenate(padded, axis=1)
     viz_path = os.path.join(output_dir, "keyframes_visualization.tiff")
     tifffile.imwrite(viz_path, viz)
     print(f"[INFO] 可视化结果已保存: {viz_path}")

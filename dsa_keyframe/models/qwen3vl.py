@@ -66,7 +66,7 @@ class Qwen3VLModel:
             **video_kwargs
         ).to(self.model.device)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             output_ids = self.model.generate(
                 **inputs,
                 max_new_tokens=self.config.max_new_tokens

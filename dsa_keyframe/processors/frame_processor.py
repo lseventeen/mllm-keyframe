@@ -13,14 +13,14 @@ import tifffile
 
 class FrameProcessor:
     @staticmethod
-    def _to_tensor(image: np.ndarray, device: torch.device) -> torch.Tensor:
+    def _to_tensor(image: np.ndarray) -> torch.Tensor:
+        """将单帧 numpy 图像转为 float32 tensor [H, W, C]（3 通道）"""
         img_np = image
         if img_np.ndim == 2:
             img_np = img_np[:, :, None]
         if img_np.shape[2] == 1:
             img_np = np.repeat(img_np, 3, axis=2)
-        img_np = img_np.astype(np.float32)
-        return torch.from_numpy(img_np).to(device)
+        return torch.from_numpy(img_np.astype(np.float32))
 
     @staticmethod
     def _log_transform_tensor(image: torch.Tensor) -> torch.Tensor:
@@ -28,16 +28,27 @@ class FrameProcessor:
 
     @staticmethod
     def _normalize_to_uint8(image: torch.Tensor) -> torch.Tensor:
-        min_val = torch.amin(image)
-        max_val = torch.amax(image)
-        if max_val > min_val:
-            image = (image - min_val) / (max_val - min_val) * 255.0
-        else:
-            image = torch.zeros_like(image)
-        return image
+        """逐帧归一化：支持单帧 [H,W,C] 和批次 [N,H,W,C]"""
+        if image.ndim == 3:
+            min_val = image.amin()
+            max_val = image.amax()
+            if max_val > min_val:
+                return (image - min_val) / (max_val - min_val) * 255.0
+            return torch.zeros_like(image)
+        # 批次：逐帧独立归一化
+        min_val = image.amin(dim=(1, 2, 3), keepdim=True)
+        max_val = image.amax(dim=(1, 2, 3), keepdim=True)
+        mask = (max_val > min_val).squeeze()
+        result = torch.zeros_like(image)
+        if mask.any():
+            result[mask] = (
+                (image[mask] - min_val[mask]) / (max_val[mask] - min_val[mask]) * 255.0
+            )
+        return result
 
     @staticmethod
     def _resize_long_edge_tensor(image: torch.Tensor, long_edge: int | None) -> torch.Tensor:
+        """Resize 单帧 [H,W,C]；long_edge<=0 或 None 时原样返回"""
         if long_edge is None or long_edge <= 0:
             return image
 
@@ -55,6 +66,26 @@ class FrameProcessor:
         return resized.squeeze(0).permute(1, 2, 0)
 
     @staticmethod
+    def _batch_resize_long_edge(images: torch.Tensor, long_edge: int | None) -> torch.Tensor:
+        """批量 Resize [N,H,W,C]；所有帧尺寸相同时一次完成"""
+        if long_edge is None or long_edge <= 0:
+            return images
+
+        h, w = int(images.shape[1]), int(images.shape[2])
+        max_edge = max(w, h)
+        if max_edge == long_edge:
+            return images
+
+        scale = long_edge / float(max_edge)
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+
+        # [N,H,W,C] -> [N,C,H,W]
+        nchw = images.permute(0, 3, 1, 2).float()
+        resized = F.interpolate(nchw, size=(new_h, new_w), mode="bilinear", align_corners=False)
+        return resized.permute(0, 2, 3, 1)
+
+    @staticmethod
     def process_dsa_sequence(
         frames: list[np.ndarray],
         indices: list[int],
@@ -63,80 +94,88 @@ class FrameProcessor:
         save_dir: str | None = None
     ) -> tuple[list[np.ndarray], list[int]]:
         """
-        DSA 序列预处理：
+        DSA 序列预处理（批量 GPU/CPU 加速）：
         - 对每帧做 log 变换
-        - 以第 3 帧为参考做减影（当前帧 - 参考帧），仅保留第 4 帧及以后
-        - 按长边进行 resize，保持宽高比
-        - 可选保存处理后的图像
+        - 以第 base_frame_number 帧为参考做减影，仅保留之后的帧
+        - 逐帧独立归一化到 uint8
+        - 按长边 resize，保持宽高比
+        - 可选保存各处理步骤的中间图像
         """
         if not frames:
-            return []
+            return [], []
 
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA 不可用，无法在 GPU 上执行预处理")
-
-        device = torch.device("cuda")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         base_idx = base_frame_number - 1
         if base_idx < 0 or base_idx >= len(frames):
             raise ValueError(f"基准帧序号超出范围: {base_frame_number}")
-
-        base_tensor = FrameProcessor._to_tensor(frames[base_idx], device)
-        base_log = FrameProcessor._log_transform_tensor(base_tensor)
-        processed_frames: list[np.ndarray] = []
-
         if base_idx + 1 >= len(frames):
             raise ValueError("序列过短，无法生成减影结果")
 
+        # 基准帧 log 变换
+        base_tensor = FrameProcessor._to_tensor(frames[base_idx]).to(device)
+        base_log = FrameProcessor._log_transform_tensor(base_tensor)  # [H, W, C]
+
+        frames_to_process = frames[base_idx + 1:]
+        processed_indices = indices[base_idx + 1:]
+
+        # ---- 批量处理：stack -> log -> diff -> normalize -> resize ----
+        # 校验所有帧尺寸一致（DSA 序列同一设备采集，尺寸应相同）
+        ref_shape = frames_to_process[0].shape[:2]
+        if any(f.shape[:2] != ref_shape for f in frames_to_process[1:]):
+            raise ValueError(
+                f"帧尺寸不一致，无法批量处理。首帧 HxW={ref_shape}，"
+                f"请确认所有帧来自同一 DSA 采集序列。"
+            )
+
+        batch = torch.stack(
+            [FrameProcessor._to_tensor(f).to(device) for f in frames_to_process]
+        )  # [N, H, W, C]
+
+        log_batch = FrameProcessor._log_transform_tensor(batch)           # [N, H, W, C]
+        diff_batch = log_batch - base_log.unsqueeze(0)                    # broadcast [N, H, W, C]
+        diff_norm_batch = FrameProcessor._normalize_to_uint8(diff_batch)  # [N, H, W, C]
+        resized_batch = FrameProcessor._batch_resize_long_edge(diff_norm_batch, resize_long_edge)
+        # 转回 CPU numpy
+        processed_np = resized_batch.byte().cpu().numpy()  # [N, H', W', C]
+        processed_frames = [processed_np[i] for i in range(len(frames_to_process))]
+
+        # ---- 可选：保存各步骤中间结果 ----
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
             step_dirs = {
                 "log": os.path.join(save_dir, "step_log"),
-                "diff_raw": os.path.join(save_dir, "step_diff_raw"),
                 "diff_norm": os.path.join(save_dir, "step_diff_norm"),
                 "resized": os.path.join(save_dir, "step_resized"),
             }
             for path in step_dirs.values():
                 os.makedirs(path, exist_ok=True)
 
+            # 保存基准帧 log 可视化
             base_log_vis = FrameProcessor._normalize_to_uint8(base_log)
             tifffile.imwrite(
                 os.path.join(step_dirs["log"], f"base_log_frame{indices[base_idx]}.tiff"),
                 base_log_vis.byte().cpu().numpy()
             )
 
-        for i, frame in enumerate(frames[base_idx + 1:], start=base_idx + 1):
-            tensor = FrameProcessor._to_tensor(frame, device)
-            log_tensor = FrameProcessor._log_transform_tensor(tensor)
-            diff_tensor = log_tensor - base_log
-            diff_norm = FrameProcessor._normalize_to_uint8(diff_tensor)
-            resized = FrameProcessor._resize_long_edge_tensor(diff_norm, resize_long_edge)
-            proc_img = resized.byte().cpu().numpy()
-            processed_frames.append(proc_img)
+            log_norm_batch = FrameProcessor._normalize_to_uint8(log_batch)  # [N, H, W, C]
+            log_norm_np = log_norm_batch.byte().cpu().numpy()
+            diff_norm_np = diff_norm_batch.byte().cpu().numpy()
 
-            if save_dir:
-                log_vis = FrameProcessor._normalize_to_uint8(log_tensor)
+            for i, frame_idx in enumerate(processed_indices):
                 tifffile.imwrite(
-                    os.path.join(step_dirs["log"], f"log_frame{indices[i]}.tiff"),
-                    log_vis.byte().cpu().numpy()
-                )
-                diff_raw_vis = FrameProcessor._normalize_to_uint8(diff_tensor)
-                tifffile.imwrite(
-                    os.path.join(step_dirs["diff_raw"], f"diff_raw_frame{indices[i]}.tiff"),
-                    diff_raw_vis.byte().cpu().numpy()
+                    os.path.join(step_dirs["log"], f"log_frame{frame_idx}.tiff"),
+                    log_norm_np[i]
                 )
                 tifffile.imwrite(
-                    os.path.join(step_dirs["diff_norm"], f"diff_norm_frame{indices[i]}.tiff"),
-                    diff_norm.byte().cpu().numpy()
+                    os.path.join(step_dirs["diff_norm"], f"diff_norm_frame{frame_idx}.tiff"),
+                    diff_norm_np[i]
                 )
                 tifffile.imwrite(
-                    os.path.join(step_dirs["resized"], f"resized_frame{indices[i]}.tiff"),
-                    proc_img
+                    os.path.join(step_dirs["resized"], f"resized_frame{frame_idx}.tiff"),
+                    processed_frames[i]
                 )
 
-        processed_indices = indices[base_idx + 1:]
-
-        if save_dir:
             for frame_idx, frame in zip(processed_indices, processed_frames):
                 path = os.path.join(save_dir, f"processed_frame{frame_idx}.tiff")
                 tifffile.imwrite(path, frame)
@@ -155,7 +194,7 @@ class FrameProcessor:
             folder_path: 图像文件夹路径
             extensions: 支持的图像扩展名
         Returns:
-            (frames, indices): PIL 图像列表 和 对应帧索引列表
+            (frames, indices): numpy 图像列表 和 对应帧索引列表
         """
         folder = Path(folder_path)
         image_files = sorted([
@@ -181,7 +220,7 @@ class FrameProcessor:
             tiff_path: TIFF 文件路径
             sample_interval: 抽帧间隔，1 表示每帧都取
         Returns:
-            (frames, indices): PIL 图像列表 和 对应帧索引列表
+            (frames, indices): numpy 图像列表 和 对应帧索引列表
         """
         video = tifffile.imread(tiff_path)
         if video.ndim == 2:
@@ -210,7 +249,7 @@ class FrameProcessor:
         """
         保存关键帧到本地
         Args:
-            frames: 关键帧 PIL 图像列表
+            frames: 关键帧 numpy 图像列表
             indices: 对应帧索引
             output_dir: 输出目录
         """
