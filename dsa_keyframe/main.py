@@ -54,7 +54,7 @@ def run(input_path: str, config: Config = None) -> list[int]:
     )
 
     # 4. 关键帧定位
-    mode_str = "逐帧评分" if config.score_mode else "多帧对比"
+    mode_str = "逐帧评分" if config.score_mode else ("全序列选帧" if config.global_mode else "多帧对比")
     print(f"\n[INFO] 开始关键帧定位，模式: {mode_str}")
     keyframe_indices = locator.locate(frames, indices)
 
@@ -87,6 +87,10 @@ def main():
                         help="输出目录（默认 ./keyframes_output）")
     parser.add_argument("--score_mode",  action="store_true",
                         help="启用逐帧评分模式（默认为多帧对比模式）")
+    parser.add_argument("--global_mode", action="store_true",
+                        help="启用全序列一次性选帧模式：将整个序列送入模型综合对比后直接选出关键帧")
+    parser.add_argument("--global_max_frames", type=int, default=32,
+                        help="全序列模式下单次送入模型的最大帧数，超出则均匀采样（默认 32）")
     args = parser.parse_args()
 
     config = Config(
@@ -96,6 +100,8 @@ def main():
         top_k=args.top_k,
         output_dir=args.output_dir,
         score_mode=args.score_mode,
+        global_mode=args.global_mode,
+        global_max_frames=args.global_max_frames,
     )
     run(input_path=args.input, config=config)
 
