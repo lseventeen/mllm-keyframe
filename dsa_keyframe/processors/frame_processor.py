@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import tifffile
+from PIL import Image
 
 
 class FrameProcessor:
@@ -134,9 +135,8 @@ class FrameProcessor:
 
             # 保存基准帧 log 可视化
             base_log_vis = FrameProcessor._normalize_to_uint8(base_log)
-            tifffile.imwrite(
-                os.path.join(step_dirs["log"], f"base_log_frame{indices[base_idx]}.tiff"),
-                base_log_vis.byte().cpu().numpy()
+            Image.fromarray(base_log_vis.byte().cpu().numpy()).save(
+                os.path.join(step_dirs["log"], f"base_log_frame{indices[base_idx]}.png")
             )
 
             log_norm_batch = FrameProcessor._normalize_to_uint8(log_batch)  # [N, H, W, C]
@@ -144,22 +144,19 @@ class FrameProcessor:
             diff_norm_np = diff_norm_batch.byte().cpu().numpy()
 
             for i, frame_idx in enumerate(processed_indices):
-                tifffile.imwrite(
-                    os.path.join(step_dirs["log"], f"log_frame{frame_idx}.tiff"),
-                    log_norm_np[i]
+                Image.fromarray(log_norm_np[i]).save(
+                    os.path.join(step_dirs["log"], f"log_frame{frame_idx}.png")
                 )
-                tifffile.imwrite(
-                    os.path.join(step_dirs["diff_norm"], f"diff_norm_frame{frame_idx}.tiff"),
-                    diff_norm_np[i]
+                Image.fromarray(diff_norm_np[i]).save(
+                    os.path.join(step_dirs["diff_norm"], f"diff_norm_frame{frame_idx}.png")
                 )
-                tifffile.imwrite(
-                    os.path.join(step_dirs["resized"], f"resized_frame{frame_idx}.tiff"),
-                    processed_frames[i]
+                Image.fromarray(processed_frames[i]).save(
+                    os.path.join(step_dirs["resized"], f"resized_frame{frame_idx}.png")
                 )
 
             for frame_idx, frame in zip(processed_indices, processed_frames):
-                path = os.path.join(save_dir, f"processed_frame{frame_idx}.tiff")
-                tifffile.imwrite(path, frame)
+                path = os.path.join(save_dir, f"processed_frame{frame_idx}.png")
+                Image.fromarray(frame).save(path)
             print(f"[INFO] 预处理后图像已保存: {save_dir}")
 
         return processed_frames, processed_indices
@@ -236,6 +233,6 @@ class FrameProcessor:
         """
         os.makedirs(output_dir, exist_ok=True)
         for rank, (frame_idx, frame) in enumerate(zip(indices, frames)):
-            path = os.path.join(output_dir, f"keyframe_rank{rank+1}_frame{frame_idx}.tiff")
-            tifffile.imwrite(path, frame)
+            path = os.path.join(output_dir, f"keyframe_rank{rank+1}_frame{frame_idx}.png")
+            Image.fromarray(frame).save(path)
             print(f"[INFO] 已保存关键帧: {path}")

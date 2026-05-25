@@ -1,11 +1,11 @@
 """
-结果可视化：生成关键帧对比图（TIFF）
+结果可视化：生成关键帧对比图（PNG）
 """
 
 import os
 
 import numpy as np
-import tifffile
+from PIL import Image
 
 from ..processors.frame_processor import FrameProcessor
 
@@ -72,6 +72,6 @@ def visualize_results(
         padded.append(p)
 
     viz = np.concatenate(padded, axis=1)
-    viz_path = os.path.join(output_dir, "keyframes_visualization.tiff")
-    tifffile.imwrite(viz_path, viz)
+    viz_path = os.path.join(output_dir, "keyframes_visualization.png")
+    Image.fromarray(viz).save(viz_path)
     print(f"[INFO] 可视化结果已保存: {viz_path}")
