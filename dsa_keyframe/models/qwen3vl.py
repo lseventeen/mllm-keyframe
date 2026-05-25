@@ -45,14 +45,41 @@ class Qwen3VLModel:
             for part in message.get("content", []):
                 if part.get("type") == "image" and isinstance(part.get("image"), np.ndarray):
                     arr = part["image"]
-                    if arr.dtype != np.uint8:
-                        arr = arr.astype(np.uint8)
-                    # 单通道 -> RGB
+
+                    # 规范化到 uint8
+                    if arr.dtype == np.float32 or arr.dtype == np.float64:
+                        # 浮点数组：若值域在 [0, 1] 则缩放，否则按实际范围归一化
+                        if arr.max() <= 1.0 and arr.min() >= 0.0:
+                            arr = (arr * 255).round().astype(np.uint8)
+                        else:
+                            low, high = arr.min(), arr.max()
+                            arr = ((arr - low) / (high - low + 1e-8) * 255).round().astype(np.uint8)
+                    elif arr.dtype != np.uint8:
+                        # 整数类型（如 uint16）：线性映射到 [0, 255]
+                        low, high = arr.min(), arr.max()
+                        arr = ((arr - low) / (high - low + 1e-8) * 255).round().astype(np.uint8)
+
+                    # 转为 3 通道 RGB
                     if arr.ndim == 2:
                         arr = np.stack([arr] * 3, axis=-1)
                     elif arr.ndim == 3 and arr.shape[2] == 1:
                         arr = np.repeat(arr, 3, axis=2)
-                    new_parts.append({**part, "image": PILImage.fromarray(arr)})
+                    elif arr.ndim == 3 and arr.shape[2] == 4:
+                        arr = arr[:, :, :3]  # RGBA -> RGB，丢弃 alpha 通道
+                    elif arr.ndim == 3 and arr.shape[2] != 3:
+                        raise ValueError(
+                            f"不支持的图像通道数 {arr.shape[2]}，期望 1、3 或 4 通道"
+                        )
+
+                    try:
+                        pil_img = PILImage.fromarray(arr)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(
+                            f"无法将 numpy 数组（shape={arr.shape}, dtype={arr.dtype}）"
+                            f"转换为 PIL 图像：{exc}"
+                        ) from exc
+
+                    new_parts.append({**part, "image": pil_img})
                 else:
                     new_parts.append(part)
             result.append({**message, "content": new_parts})
