@@ -32,3 +32,4 @@ class Config:
 
     # 预处理配置
     resize_long_edge: int = 256                    # 预处理后图像长边像素
+    base_frame_number: int = 3                     # 基准帧编号（从 1 计）

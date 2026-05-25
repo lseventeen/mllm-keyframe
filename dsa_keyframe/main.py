@@ -35,7 +35,7 @@ def run(input_path: str, config: Config = None) -> list[int]:
         frames, indices = FrameProcessor.extract_frames_from_folder(str(p))
     elif p.is_file() and p.suffix.lower() in (".tif", ".tiff"):
         frames, indices = FrameProcessor.extract_frames_from_tiff(str(p), config.sample_interval)
-    elif p.exists():
+    elif p.is_file():
         raise ValueError(f"仅支持图像文件夹或多页 TIFF: {input_path}")
     else:
         raise FileNotFoundError(f"输入路径不存在: {input_path}")
@@ -48,7 +48,7 @@ def run(input_path: str, config: Config = None) -> list[int]:
     frames, indices = FrameProcessor.process_dsa_sequence(
         frames,
         indices,
-        base_frame_number=3,
+        base_frame_number=config.base_frame_number,
         resize_long_edge=config.resize_long_edge,
         save_dir=processed_dir
     )
