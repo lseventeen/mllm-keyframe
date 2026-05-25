@@ -23,8 +23,10 @@ class Config:
     output_dir: str = "./keyframes_output"           # 关键帧保存目录
 
     # 推理配置
-    max_new_tokens: int = 20                         # 模型最大生成 token 数
+    max_new_tokens: int = 50                         # 模型最大生成 token 数
     score_mode: bool = False                         # True=逐帧打分模式, False=多帧对比模式（默认）
+    global_mode: bool = False                        # True=全序列一次性选帧模式，False=滑动窗口模式（默认）
+    global_max_frames: int = 32                      # 全序列模式下单次送入模型的最大帧数（超出则均匀采样）
 
     # 图像分辨率控制（视显存大小调整）
     min_pixels: int = 256 * 32 * 32                  # 最小像素数

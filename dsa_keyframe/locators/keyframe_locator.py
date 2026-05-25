@@ -129,6 +129,87 @@ class DSAKeyframeLocator:
         return sorted([idx for idx, _ in sorted_candidates[:self.config.top_k]])
 
     # ----------------------------------------------------------
+    # 方案三：全序列一次性选帧
+    # ----------------------------------------------------------
+    def locate_by_global_selection(
+        self,
+        frames: list[np.ndarray],
+        indices: list[int]
+    ) -> list[int]:
+        """
+        将整个序列（或均匀采样后的子集）一次性送入模型，
+        让模型综合对比所有帧后直接选出 top_k 关键帧。
+
+        当帧数超过 config.global_max_frames 时，先均匀采样
+        降至 global_max_frames 帧，再送入模型；选出的帧号
+        会映射回原始 indices。
+        """
+        n_total = len(frames)
+        max_f = self.config.global_max_frames
+
+        # 均匀采样（帧数过多时）
+        if n_total > max_f:
+            sample_pos = [round(i * (n_total - 1) / (max_f - 1)) for i in range(max_f)]
+            sel_frames = [frames[p] for p in sample_pos]
+            sel_indices = [indices[p] for p in sample_pos]
+            print(f"[INFO] 全序列模式：帧数 {n_total} 超过上限 {max_f}，"
+                  f"均匀采样至 {max_f} 帧后送入模型")
+        else:
+            sel_frames = frames
+            sel_indices = indices
+            print(f"[INFO] 全序列模式：将全部 {n_total} 帧一次性送入模型")
+
+        n = len(sel_frames)
+        content = []
+        for i, img in enumerate(sel_frames):
+            content.append({"type": "text", "text": f"[Frame {i + 1}]"})
+            content.append({"type": "image", "image": img})
+
+        content.append({
+            "type": "text",
+            "text": (
+                f"Above are all {n} frames of a DSA (Digital Subtraction Angiography) sequence "
+                f"in chronological order.\n"
+                f"Please select the {self.config.top_k} KEY FRAME(S) that best satisfy:\n"
+                f"  1. Peak contrast agent filling in the target vessel\n"
+                f"  2. Clearest vessel structure and boundaries\n"
+                f"  3. Highest diagnostic value\n"
+                f"Consider ALL frames together before deciding.\n"
+                f"Reply with ONLY {self.config.top_k} frame number(s) from 1 to {n}, "
+                f"separated by spaces or commas. No explanation."
+            )
+        })
+
+        messages = [{"role": "user", "content": content}]
+        result = self.model.generate(messages)
+        print(f"[INFO] 模型回复: {result}")
+
+        chosen_nums = [int(m) for m in re.findall(r"\d+", result)]
+        # 去重、裁剪到有效范围，记录并丢弃越界值
+        valid_set = set()
+        for c in chosen_nums:
+            clamped = max(1, min(c, n))
+            if clamped != c:
+                print(f"[WARN] 模型返回帧号 {c} 超出范围 [1, {n}]，已修正为 {clamped}")
+            valid_set.add(clamped)
+        valid = sorted(valid_set)
+        # 取前 top_k 个（按帧号升序）
+        valid = valid[:self.config.top_k]
+        # 不足 top_k 时补充（从剩余帧中间位置填满）
+        if len(valid) < self.config.top_k:
+            fallback = [i + 1 for i in range(n) if (i + 1) not in set(valid)]
+            need = self.config.top_k - len(valid)
+            if fallback:
+                mid = max(0, len(fallback) // 2 - need // 2)
+                valid.extend(fallback[mid:mid + need])
+            valid.sort()
+
+        # 将局部帧编号映射回原始 indices
+        result_indices = sorted(sel_indices[c - 1] for c in valid)
+        print(f"[INFO] 全序列选帧结果（原始帧索引）: {result_indices}")
+        return result_indices
+
+    # ----------------------------------------------------------
     # 统一入口
     # ----------------------------------------------------------
     def locate(
@@ -136,7 +217,13 @@ class DSAKeyframeLocator:
         frames: list[np.ndarray],
         indices: list[int]
     ) -> list[int]:
-        """根据 config.score_mode 选择定位策略"""
+        """根据 config 选择定位策略：
+        - global_mode=True  → 全序列一次性选帧（方案三）
+        - score_mode=True   → 逐帧打分（方案一）
+        - 默认              → 滑动窗口多帧对比（方案二）
+        """
+        if self.config.global_mode:
+            return self.locate_by_global_selection(frames, indices)
         if self.config.score_mode:
             return self.locate_by_scoring(frames, indices)
         return self.locate_by_comparison(frames, indices)
